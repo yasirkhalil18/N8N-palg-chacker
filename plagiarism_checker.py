@@ -1,45 +1,39 @@
 import requests
 from bs4 import BeautifulSoup
-import re
-import time
+import hashlib
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
-
-def search_google(query):
+def check_plagiarism(text):
+    query = '+'.join(text.split()[:8])
     url = f"https://www.google.com/search?q={query}"
-    response = requests.get(url, headers=HEADERS)
-    time.sleep(1.5)  # Avoid being blocked
-    return response.text
+    headers = {
+        'User-Agent': 'Mozilla/5.0'
+    }
 
-def extract_results(html):
-    soup = BeautifulSoup(html, 'lxml')
-    results = soup.find_all('div', class_='BNeawe s3v9rd AP7Wnd')
-    return [res.get_text() for res in results if res.get_text()]
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+    except Exception as e:
+        return {'error': 'Failed to fetch search results', 'details': str(e)}
 
-def clean_sentence(sentence):
-    sentence = re.sub(r'[^\w\s]', '', sentence)
-    return sentence.strip().lower()
+    if response.status_code != 200:
+        return {'error': 'Google search failed', 'status_code': response.status_code}
 
-def check_text(text):
-    sentences = re.split(r'(?<=[.!?]) +', text)
-    total = len(sentences)
-    plagiarized = 0
+    soup = BeautifulSoup(response.text, 'html.parser')
+    results = soup.find_all('a')
 
-    for sentence in sentences:
-        clean = clean_sentence(sentence)
-        if not clean or len(clean) < 8:
-            continue
+    hashes = []
+    for link in results[:3]:
+        href = link.get('href')
+        if href and 'http' in href:
+            try:
+                page = requests.get(href, timeout=5)
+                content = BeautifulSoup(page.text, 'html.parser').get_text()
+                page_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+                hashes.append(page_hash)
+            except:
+                continue
 
-        html = search_google(f'"{clean}"')  # Exact match
-        results = extract_results(html)
-        found = any(clean in result.lower() for result in results)
+    original_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+    match_count = hashes.count(original_hash)
+    percent = (match_count / len(hashes)) * 100 if hashes else 0.0
 
-        if found:
-            plagiarized += 1
-
-    if total == 0:
-        return 0.0
-
-    return round((plagiarized / total) * 100, 2)
+    return {'plag_percent': round(percent, 2)}
